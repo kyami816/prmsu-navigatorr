@@ -25,20 +25,8 @@ const app = express();
 const certPath = path.join(__dirname, 'ssl', 'cert.pem');
 const keyPath = path.join(__dirname, 'ssl', 'key.pem');
 
-let server;
-if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
-    const options = {
-        cert: fs.readFileSync(certPath),
-        key: fs.readFileSync(keyPath)
-    };
-    server = https.createServer(options, app);
-    console.log('✓ HTTPS server initialized with SSL certificates');
-} else {
-    console.warn('⚠️  SSL certificates not found! Falling back to HTTP.');
-    console.log('To generate certificates, run: node generate-cert.js');
-    const http = require('http');
-    server = http.createServer(app);
-}
+const http = require('http');
+const server = http.createServer(app);
 
 const io = socketIO(server, {
     cors: {
