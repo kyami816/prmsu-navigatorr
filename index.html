@@ -8,15 +8,8 @@
     <link rel="stylesheet" href="styleprmsu.css">
     <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyAcTbJqFhWhcY7EjpbQfltA8y9Hn6kZwF4&libraries=places,geometry&callback=initGoogleMaps" async="async" defer="defer"></script>
     <script>
-        window.socketIOConfig = {
-            url: (function() {
-                if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') return '/';
-                return window.location.origin;
-            })()
-        };
         console.log('[Config] Socket.IO connecting to:', window.socketIOConfig.url);
     </script>
-    <script src="/socket.io/socket.io.js"></script>
 </head>
 <body>
 
