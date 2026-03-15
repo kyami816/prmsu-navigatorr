@@ -142,7 +142,7 @@ function initializeMultiplayer() {
     }
 
     // Initialize Socket.IO connection
-    const socketURL = window.location.origin;
+    const socketURL = prmsu-navigatorr-production.up.railway.app;
     multiplayerState.socket = io(socketURL, {
         path: "/socket.io/",
         transports: ["websocket", "polling"],
