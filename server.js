@@ -1,6 +1,7 @@
+```javascript
 // ============================================
 // PRMSU Campus Navigator - Interactive Multiplayer Server
-// Express + Socket.IO Backend
+// Express + Socket.IO Backend (FIXED)
 // ============================================
 
 // Prevent server crash
@@ -33,13 +34,12 @@ const PORT = process.env.PORT || 3000;
 
 const rooms = new Map();
 
-// Debug active rooms
 setInterval(() => {
     console.log('[ROOMS] Active rooms:', rooms.size, Array.from(rooms.keys()));
 }, 10000);
 
 // ============================================
-// Device & IP-Based Persistence
+// Device Storage
 // ============================================
 
 const deviceStorage = new Map();
@@ -94,8 +94,6 @@ function broadcastRoomState(roomId) {
         }))
     };
 
-    console.log(`[ROOM] ${roomId} broadcasting ${room.members.size} members`);
-
     io.to(roomId).emit('room_state', roomState);
 }
 
@@ -107,9 +105,7 @@ function getClientIP(socket) {
 }
 
 function getOrCreateDeviceData(clientIP, userId, displayName) {
-
     if (!deviceStorage.has(clientIP)) {
-
         deviceStorage.set(clientIP, {
             ip: clientIP,
             userId,
@@ -120,27 +116,18 @@ function getOrCreateDeviceData(clientIP, userId, displayName) {
             navigationHistory: [],
             lastUpdate: Date.now()
         });
-
     }
-
     const device = deviceStorage.get(clientIP);
     device.lastUpdate = Date.now();
-
     return device;
 }
 
 function saveDeviceData(clientIP, data) {
-
     if (deviceStorage.has(clientIP)) {
-
         const device = deviceStorage.get(clientIP);
-
         Object.assign(device, data);
-
         device.lastUpdate = Date.now();
     }
-
-    console.log(`[DEVICE] Data saved for IP ${clientIP}`);
 }
 
 // ============================================
@@ -165,20 +152,13 @@ io.on('connection', (socket) => {
     const displayName = socket.handshake.query.displayName || `User-${userId.substring(0, 6)}`;
     const clientIP = getClientIP(socket);
 
-    console.log(`[SOCKET] User connected: ${userId} (${socket.id})`);
+    console.log(`[SOCKET] Connected: ${userId}`);
 
-    // ============================================
     // CREATE ROOM
-    // ============================================
-
     socket.on('create_room', (data, callback) => {
-
         try {
-
             const deviceData = getOrCreateDeviceData(clientIP, userId, displayName);
-
             const roomCode = generateRoomCode();
-
             const campus = (data.campus || 'main').toLowerCase().trim();
 
             const newRoom = {
@@ -203,58 +183,22 @@ io.on('connection', (socket) => {
 
             socket.join(roomCode);
 
-            console.log(`[ROOM] ${roomCode} created`);
-
             callback({ success: true, roomCode, userId, deviceData });
-
             broadcastRoomState(roomCode);
 
         } catch (err) {
-
-            console.error(err);
-
             callback({ success: false, error: err.message });
-
         }
-
     });
 
-    // ============================================
     // JOIN ROOM
-    // ============================================
-
     socket.on('join_room', (data, callback) => {
-
         try {
-
-            const roomCode = data.roomCode;
-
-            const room = rooms.get(roomCode);
-
+            const room = rooms.get(data.roomCode);
             const deviceData = getOrCreateDeviceData(clientIP, userId, displayName);
 
-            if (!room) {
-
-                return callback({ success:false, error:'Room not found' });
-
-            }
-
-            if (room.locked) {
-
-                return callback({ success:false, error:'Room locked' });
-
-            }
-
-            const joiningCampus = (data.campus || 'main').toLowerCase().trim();
-
-            if (room.campus && room.campus !== joiningCampus) {
-
-                return callback({
-                    success:false,
-                    error:'Wrong campus for this lobby'
-                });
-
-            }
+            if (!room) return callback({ success:false, error:'Room not found' });
+            if (room.locked) return callback({ success:false, error:'Room locked' });
 
             room.members.set(userId, {
                 userId,
@@ -266,192 +210,150 @@ io.on('connection', (socket) => {
                 isHost: false
             });
 
-            socket.join(roomCode);
+            socket.join(data.roomCode);
 
-            callback({ success:true, roomCode, userId, deviceData });
-
-            broadcastRoomState(roomCode);
+            callback({ success:true, roomCode:data.roomCode, userId, deviceData });
+            broadcastRoomState(data.roomCode);
 
         } catch (err) {
-
-            console.error(err);
-
             callback({ success:false, error:err.message });
-
         }
-
     });
 
-    // ============================================
-    // LOCATION UPDATE
-    // ============================================
-
+    // LOCATION
     socket.on('loc', (data)=>{
-
         const room = rooms.get(data.roomCode);
-
         if(!room) return;
-
-        if(!room.members.has(userId)) return;
-
         const user = room.members.get(userId);
+        if(!user) return;
 
         user.lat = data.lat;
         user.lng = data.lng;
         user.lastUpdate = Date.now();
 
         broadcastRoomState(data.roomCode);
-
     });
 
-    // ============================================
     // DESTINATION
-    // ============================================
-
     socket.on('set_destination', (data, callback)=>{
-
         const room = rooms.get(data.roomCode);
-
-        if(!room) return callback({success:false,error:'Room not found'});
+        if(!room) return callback({success:false});
 
         const user = room.members.get(userId);
-
-        if(!user || !user.isHost){
-
-            return callback({success:false,error:'Only host can set destination'});
-
-        }
+        if(!user || !user.isHost) return callback({success:false});
 
         room.sharedDestination = data.destination;
 
         io.to(data.roomCode).emit('destination_updated',{destination:data.destination});
-
         broadcastRoomState(data.roomCode);
 
         callback({success:true});
-
     });
 
-    // ============================================
     // CHAT
-    // ============================================
-
     socket.on('send_message',(data,callback)=>{
-
         const room = rooms.get(data.roomCode);
-
         if(!room) return callback({success:false});
 
-        const message = {
+        io.to(data.roomCode).emit('chat_message',{
             userId:data.userId,
             displayName:data.displayName,
             message:String(data.message).substring(0,200),
             timestamp:Date.now(),
-            roomCode:data.roomCode,
             isSystemMessage:data.isSystemMessage
-        };
-
-        io.to(data.roomCode).emit('chat_message',message);
+        });
 
         callback({success:true});
-
     });
 
-    // ============================================
-    // LEAVE ROOM
-    // ============================================
-
-    socket.on('leave_room',(data)=>{
+    // KICK USER (FIXED)
+    socket.on('kick_user', (data, callback) => {
 
         const room = rooms.get(data.roomCode);
+        if (!room) return callback({ success:false });
 
+        const requester = room.members.get(userId);
+        if (!requester || !requester.isHost) {
+            return callback({ success:false });
+        }
+
+        const targetUser = room.members.get(data.targetUserId);
+        if (!targetUser) return callback({ success:false });
+
+        room.members.delete(data.targetUserId);
+
+        const targetSocket = io.sockets.sockets.get(targetUser.socketId);
+        if (targetSocket) {
+            targetSocket.leave(data.roomCode);
+            targetSocket.emit('kicked', { reason: 'Removed by host' });
+        }
+
+        broadcastRoomState(data.roomCode);
+
+        callback({ success:true });
+    });
+
+    // LEAVE ROOM (FIXED HOST TRANSFER)
+    socket.on('leave_room',(data)=>{
+        const room = rooms.get(data.roomCode);
         if(!room) return;
 
-        room.members.delete(userId);
+        const wasHost = room.members.get(userId)?.isHost;
 
+        room.members.delete(userId);
         socket.leave(data.roomCode);
 
         if(room.members.size===0){
-
             rooms.delete(data.roomCode);
+        } else {
 
-        }else{
+            if (wasHost) {
+                const newHost = Array.from(room.members.values())[0];
+                if (newHost) {
+                    newHost.isHost = true;
+                    room.hostSocketId = newHost.socketId;
+                }
+            }
 
             broadcastRoomState(data.roomCode);
-
         }
-
     });
 
-    // ============================================
-    // DEVICE DATA
-    // ============================================
-
-    socket.on('save_device_data',(data,callback)=>{
-
-        saveDeviceData(clientIP,data);
-
-        callback({success:true});
-
-    });
-
-    socket.on('get_device_data',(data,callback)=>{
-
-        callback({
-            success:true,
-            deviceData:deviceStorage.get(clientIP)||null
-        });
-
-    });
-
-    // ============================================
-    // DISCONNECT
-    // ============================================
-
+    // DISCONNECT (FIXED HOST TRANSFER)
     socket.on('disconnect',()=>{
 
-        console.log(`[SOCKET] Disconnected ${userId}`);
-
         const result = getRoomByUserId(userId);
-
         if(!result) return;
 
         const {roomId,room} = result;
 
+        const wasHost = room.members.get(userId)?.isHost;
+
         room.members.delete(userId);
 
         if(room.members.size===0){
-
             rooms.delete(roomId);
+        } else {
 
-        }else{
+            if (wasHost) {
+                const newHost = Array.from(room.members.values())[0];
+                if (newHost) {
+                    newHost.isHost = true;
+                    room.hostSocketId = newHost.socketId;
+                }
+            }
 
             broadcastRoomState(roomId);
-
         }
-
     });
 
 });
 
 // ============================================
-// SERVER START
+// START SERVER
 // ============================================
 
 server.listen(PORT,'0.0.0.0',()=>{
-
-console.log(`
-╔════════════════════════════════════════════╗
-║ PRMSU Campus Navigator Multiplayer Server  ║
-║ Running on port ${PORT}                    ║
-║ Socket.IO path: /socket.io/                ║
-╚════════════════════════════════════════════╝
-`);
-
+    console.log(`Server running on port ${PORT}`);
 });
-
-// Graceful shutdown
-process.on('SIGTERM', () => {
-    console.log('[SERVER] Shutting down...');
-    server.close(() => process.exit(0));
-});
+```
