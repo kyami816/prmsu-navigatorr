@@ -3,14 +3,9 @@
 // Express + Socket.IO Backend
 // ============================================
 
-// Prevent server crash
 process.on('uncaughtException', (err) => {
     console.error('Uncaught Exception:', err);
 });
-
-// ============================================
-// Imports
-// ============================================
 
 const express = require('express');
 const http = require('http');
@@ -21,10 +16,6 @@ const cors = require('cors');
 const app = express();
 const server = http.createServer(app);
 
-// ============================================
-// Configuration
-// ============================================
-
 const PORT = process.env.PORT || 3000;
 
 // ============================================
@@ -33,7 +24,6 @@ const PORT = process.env.PORT || 3000;
 
 const rooms = new Map();
 
-// Debug active rooms
 setInterval(() => {
     console.log('[ROOMS] Active rooms:', rooms.size, Array.from(rooms.keys()));
 }, 10000);
@@ -95,7 +85,6 @@ function broadcastRoomState(roomId) {
     };
 
     console.log(`[ROOM] ${roomId} broadcasting ${room.members.size} members`);
-
     io.to(roomId).emit('room_state', roomState);
 }
 
@@ -107,9 +96,7 @@ function getClientIP(socket) {
 }
 
 function getOrCreateDeviceData(clientIP, userId, displayName) {
-
     if (!deviceStorage.has(clientIP)) {
-
         deviceStorage.set(clientIP, {
             ip: clientIP,
             userId,
@@ -120,27 +107,33 @@ function getOrCreateDeviceData(clientIP, userId, displayName) {
             navigationHistory: [],
             lastUpdate: Date.now()
         });
-
     }
-
     const device = deviceStorage.get(clientIP);
     device.lastUpdate = Date.now();
-
     return device;
 }
 
 function saveDeviceData(clientIP, data) {
-
     if (deviceStorage.has(clientIP)) {
-
         const device = deviceStorage.get(clientIP);
-
         Object.assign(device, data);
-
         device.lastUpdate = Date.now();
     }
-
     console.log(`[DEVICE] Data saved for IP ${clientIP}`);
+}
+
+// ============================================
+// Host Transfer Helper
+// ============================================
+
+function transferHostIfNeeded(roomId, room) {
+    const hasHost = Array.from(room.members.values()).some(m => m.isHost);
+    if (!hasHost && room.members.size > 0) {
+        const newHost = Array.from(room.members.values())[0];
+        newHost.isHost = true;
+        room.hostSocketId = newHost.socketId;
+        console.log(`[ROOM] ${roomId} host transferred to ${newHost.displayName}`);
+    }
 }
 
 // ============================================
@@ -155,15 +148,6 @@ app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'prmsu nav web app.html'));
 });
 
-function transferHostIfNeeded(roomId, room) {
-    const hasHost = Array.from(room.members.values()).some(m => m.isHost);
-    if (!hasHost && room.members.size > 0) {
-        const newHost = Array.from(room.members.values())[0];
-        newHost.isHost = true;
-        room.hostSocketId = newHost.socketId;
-        console.log(`[ROOM] ${roomId} host transferred to ${newHost.displayName}`);
-    }
-}
 // ============================================
 // Socket.IO Events
 // ============================================
@@ -181,13 +165,9 @@ io.on('connection', (socket) => {
     // ============================================
 
     socket.on('create_room', (data, callback) => {
-
         try {
-
             const deviceData = getOrCreateDeviceData(clientIP, userId, displayName);
-
             const roomCode = generateRoomCode();
-
             const campus = (data.campus || 'main').toLowerCase().trim();
 
             const newRoom = {
@@ -211,21 +191,13 @@ io.on('connection', (socket) => {
             });
 
             socket.join(roomCode);
-
-            console.log(`[ROOM] ${roomCode} created`);
-
+            console.log(`[ROOM] ${roomCode} created by ${displayName}`);
             callback({ success: true, roomCode, userId, deviceData });
-
             broadcastRoomState(roomCode);
-
         } catch (err) {
-
-            console.error(err);
-
+            console.error('[CREATE ROOM ERROR]', err);
             callback({ success: false, error: err.message });
-
         }
-
     });
 
     // ============================================
@@ -233,36 +205,21 @@ io.on('connection', (socket) => {
     // ============================================
 
     socket.on('join_room', (data, callback) => {
-
         try {
-
             const roomCode = data.roomCode;
-
             const room = rooms.get(roomCode);
-
             const deviceData = getOrCreateDeviceData(clientIP, userId, displayName);
 
             if (!room) {
-
-                return callback({ success:false, error:'Room not found' });
-
+                return callback({ success: false, error: 'Room not found' });
             }
-
             if (room.locked) {
-
-                return callback({ success:false, error:'Room locked' });
-
+                return callback({ success: false, error: 'Room is locked' });
             }
 
             const joiningCampus = (data.campus || 'main').toLowerCase().trim();
-
             if (room.campus && room.campus !== joiningCampus) {
-
-                return callback({
-                    success:false,
-                    error:'Wrong campus for this lobby'
-                });
-
+                return callback({ success: false, error: 'Wrong campus for this lobby' });
             }
 
             room.members.set(userId, {
@@ -276,207 +233,197 @@ io.on('connection', (socket) => {
             });
 
             socket.join(roomCode);
-
-            callback({ success:true, roomCode, userId, deviceData });
-
+            console.log(`[ROOM] ${displayName} joined ${roomCode}`);
+            callback({ success: true, roomCode, userId, deviceData });
             broadcastRoomState(roomCode);
-
         } catch (err) {
-
-            console.error(err);
-
-            callback({ success:false, error:err.message });
-
+            console.error('[JOIN ROOM ERROR]', err);
+            callback({ success: false, error: err.message });
         }
-
     });
 
     // ============================================
     // LOCATION UPDATE
     // ============================================
 
-    socket.on('loc', (data)=>{
-
+    socket.on('loc', (data) => {
         const room = rooms.get(data.roomCode);
-
-        if(!room) return;
-
-        if(!room.members.has(userId)) return;
+        if (!room) return;
+        if (!room.members.has(userId)) return;
 
         const user = room.members.get(userId);
-
         user.lat = data.lat;
         user.lng = data.lng;
         user.lastUpdate = Date.now();
 
         broadcastRoomState(data.roomCode);
-
     });
 
     // ============================================
     // DESTINATION
     // ============================================
 
-    socket.on('set_destination', (data, callback)=>{
-
+    socket.on('set_destination', (data, callback) => {
         const room = rooms.get(data.roomCode);
-
-        if(!room) return callback({success:false,error:'Room not found'});
+        if (!room) return callback({ success: false, error: 'Room not found' });
 
         const user = room.members.get(userId);
-
-        if(!user || !user.isHost){
-
-            return callback({success:false,error:'Only host can set destination'});
-
+        if (!user || !user.isHost) {
+            return callback({ success: false, error: 'Only host can set destination' });
         }
 
         room.sharedDestination = data.destination;
-
-        io.to(data.roomCode).emit('destination_updated',{destination:data.destination});
-
+        io.to(data.roomCode).emit('destination_updated', { destination: data.destination });
         broadcastRoomState(data.roomCode);
-
-        callback({success:true});
-
+        callback({ success: true });
     });
 
     // ============================================
     // CHAT
     // ============================================
 
-    socket.on('send_message',(data,callback)=>{
-
+    socket.on('send_message', (data, callback) => {
         const room = rooms.get(data.roomCode);
-
-        if(!room) return callback({success:false});
+        if (!room) return callback({ success: false });
 
         const message = {
-            userId:data.userId,
-            displayName:data.displayName,
-            message:String(data.message).substring(0,200),
-            timestamp:Date.now(),
-            roomCode:data.roomCode,
-            isSystemMessage:data.isSystemMessage
+            userId: data.userId,
+            displayName: data.displayName,
+            message: String(data.message).substring(0, 200),
+            timestamp: Date.now(),
+            roomCode: data.roomCode,
+            isSystemMessage: data.isSystemMessage
         };
 
-        io.to(data.roomCode).emit('chat_message',message);
-
-        callback({success:true});
-
+        io.to(data.roomCode).emit('chat_message', message);
+        callback({ success: true });
     });
 
-   // ============================================
-// LEAVE ROOM
-// ============================================
+    // ============================================
+    // KICK USER
+    // ============================================
 
-socket.on('leave_room', (data) => {
-    const room = rooms.get(data.roomCode);
-    if (!room) return;
+    socket.on('kick_user', (data, callback) => {
+        try {
+            const room = rooms.get(data.roomCode);
+            if (!room) return callback({ success: false, error: 'Room not found' });
 
-    room.members.delete(userId);
-    socket.leave(data.roomCode);
+            const requestingUser = room.members.get(userId);
+            if (!requestingUser || !requestingUser.isHost) {
+                return callback({ success: false, error: 'Only host can kick users' });
+            }
 
-    if (room.members.size === 0) {
-        rooms.delete(data.roomCode);
-    } else {
-        transferHostIfNeeded(data.roomCode, room);
-        broadcastRoomState(data.roomCode);
-    }
-});
+            const targetUser = room.members.get(data.targetUserId);
+            if (!targetUser) return callback({ success: false, error: 'User not found' });
 
-// ============================================
-// KICK USER
-// ============================================
+            // Notify the kicked user directly via their socket ID
+            io.to(targetUser.socketId).emit('kicked', { reason: 'You were removed by the host.' });
 
-socket.on('kick_user', (data, callback) => {
-    try {
+            // Remove from room
+            room.members.delete(data.targetUserId);
+
+            console.log(`[KICK] ${targetUser.displayName} kicked from ${data.roomCode}`);
+            callback({ success: true });
+            broadcastRoomState(data.roomCode);
+        } catch (err) {
+            console.error('[KICK ERROR]', err);
+            callback({ success: false, error: err.message });
+        }
+    });
+
+    // ============================================
+    // LOCK ROOM
+    // ============================================
+
+    socket.on('lock_room', (data, callback) => {
         const room = rooms.get(data.roomCode);
         if (!room) return callback({ success: false, error: 'Room not found' });
 
-        const requestingUser = room.members.get(userId);
-        if (!requestingUser || !requestingUser.isHost) {
-            return callback({ success: false, error: 'Only host can kick users' });
+        const user = room.members.get(userId);
+        if (!user || !user.isHost) {
+            return callback({ success: false, error: 'Only host can lock the room' });
         }
 
-        const targetUser = room.members.get(data.targetUserId);
-        if (!targetUser) return callback({ success: false, error: 'User not found' });
-
-        // Notify the kicked user directly via their socket
-        io.to(targetUser.socketId).emit('kicked', { reason: 'You were removed by the host.' });
-
-        // Remove from room
-        room.members.delete(data.targetUserId);
-
-        console.log(`[KICK] ${targetUser.displayName} kicked from ${data.roomCode}`);
+        room.locked = data.locked;
+        console.log(`[ROOM] ${data.roomCode} locked: ${data.locked}`);
         callback({ success: true });
-
         broadcastRoomState(data.roomCode);
-    } catch (err) {
-        console.error('[KICK ERROR]', err);
-        callback({ success: false, error: err.message });
-    }
-});
+    });
+
+    // ============================================
+    // LEAVE ROOM
+    // ============================================
+
+    socket.on('leave_room', (data) => {
+        const room = rooms.get(data.roomCode);
+        if (!room) return;
+
+        room.members.delete(userId);
+        socket.leave(data.roomCode);
+
+        if (room.members.size === 0) {
+            rooms.delete(data.roomCode);
+            console.log(`[ROOM] ${data.roomCode} deleted (empty)`);
+        } else {
+            transferHostIfNeeded(data.roomCode, room);
+            broadcastRoomState(data.roomCode);
+        }
+    });
 
     // ============================================
     // DEVICE DATA
     // ============================================
 
-    socket.on('save_device_data',(data,callback)=>{
-
-        saveDeviceData(clientIP,data);
-
-        callback({success:true});
-
+    socket.on('save_device_data', (data, callback) => {
+        saveDeviceData(clientIP, data);
+        callback({ success: true });
     });
 
-    socket.on('get_device_data',(data,callback)=>{
-
+    socket.on('get_device_data', (data, callback) => {
         callback({
-            success:true,
-            deviceData:deviceStorage.get(clientIP)||null
+            success: true,
+            deviceData: deviceStorage.get(clientIP) || null
         });
-
     });
 
     // ============================================
     // DISCONNECT
     // ============================================
 
-   socket.on('disconnect', () => {
-    console.log(`[SOCKET] Disconnected ${userId}`);
+    socket.on('disconnect', () => {
+        console.log(`[SOCKET] Disconnected ${userId} (${displayName})`);
 
-    const result = getRoomByUserId(userId);
-    if (!result) return;
+        const result = getRoomByUserId(userId);
+        if (!result) return;
 
-    const { roomId, room } = result;
-    room.members.delete(userId);
+        const { roomId, room } = result;
+        room.members.delete(userId);
 
-    if (room.members.size === 0) {
-        rooms.delete(roomId);
-    } else {
-        transferHostIfNeeded(roomId, room);
-        broadcastRoomState(roomId);
-    }
-});
+        if (room.members.size === 0) {
+            rooms.delete(roomId);
+            console.log(`[ROOM] ${roomId} deleted (empty after disconnect)`);
+        } else {
+            transferHostIfNeeded(roomId, room);
+            broadcastRoomState(roomId);
+        }
+    });
+
+}); // end io.on('connection')
 
 // ============================================
 // SERVER START
 // ============================================
 
-server.listen(PORT,'0.0.0.0',()=>{
-
-console.log(`
+server.listen(PORT, '0.0.0.0', () => {
+    console.log(`
 ╔════════════════════════════════════════════╗
 ║ PRMSU Campus Navigator Multiplayer Server  ║
 ║ Running on port ${PORT}                    ║
 ║ Socket.IO path: /socket.io/                ║
 ╚════════════════════════════════════════════╝
-`);
-
+    `);
 });
 
-// Graceful shutdown
 process.on('SIGTERM', () => {
     console.log('[SERVER] Shutting down...');
     server.close(() => process.exit(0));
