@@ -155,6 +155,15 @@ app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'prmsu nav web app.html'));
 });
 
+function transferHostIfNeeded(roomId, room) {
+    const hasHost = Array.from(room.members.values()).some(m => m.isHost);
+    if (!hasHost && room.members.size > 0) {
+        const newHost = Array.from(room.members.values())[0];
+        newHost.isHost = true;
+        room.hostSocketId = newHost.socketId;
+        console.log(`[ROOM] ${roomId} host transferred to ${newHost.displayName}`);
+    }
+}
 // ============================================
 // Socket.IO Events
 // ============================================
@@ -357,31 +366,57 @@ io.on('connection', (socket) => {
 
     });
 
-    // ============================================
-    // LEAVE ROOM
-    // ============================================
+   // ============================================
+// LEAVE ROOM
+// ============================================
 
-    socket.on('leave_room',(data)=>{
+socket.on('leave_room', (data) => {
+    const room = rooms.get(data.roomCode);
+    if (!room) return;
 
+    room.members.delete(userId);
+    socket.leave(data.roomCode);
+
+    if (room.members.size === 0) {
+        rooms.delete(data.roomCode);
+    } else {
+        transferHostIfNeeded(data.roomCode, room);
+        broadcastRoomState(data.roomCode);
+    }
+});
+
+// ============================================
+// KICK USER
+// ============================================
+
+socket.on('kick_user', (data, callback) => {
+    try {
         const room = rooms.get(data.roomCode);
+        if (!room) return callback({ success: false, error: 'Room not found' });
 
-        if(!room) return;
-
-        room.members.delete(userId);
-
-        socket.leave(data.roomCode);
-
-        if(room.members.size===0){
-
-            rooms.delete(data.roomCode);
-
-        }else{
-
-            broadcastRoomState(data.roomCode);
-
+        const requestingUser = room.members.get(userId);
+        if (!requestingUser || !requestingUser.isHost) {
+            return callback({ success: false, error: 'Only host can kick users' });
         }
 
-    });
+        const targetUser = room.members.get(data.targetUserId);
+        if (!targetUser) return callback({ success: false, error: 'User not found' });
+
+        // Notify the kicked user directly via their socket
+        io.to(targetUser.socketId).emit('kicked', { reason: 'You were removed by the host.' });
+
+        // Remove from room
+        room.members.delete(data.targetUserId);
+
+        console.log(`[KICK] ${targetUser.displayName} kicked from ${data.roomCode}`);
+        callback({ success: true });
+
+        broadcastRoomState(data.roomCode);
+    } catch (err) {
+        console.error('[KICK ERROR]', err);
+        callback({ success: false, error: err.message });
+    }
+});
 
     // ============================================
     // DEVICE DATA
@@ -408,30 +443,21 @@ io.on('connection', (socket) => {
     // DISCONNECT
     // ============================================
 
-    socket.on('disconnect',()=>{
+   socket.on('disconnect', () => {
+    console.log(`[SOCKET] Disconnected ${userId}`);
 
-        console.log(`[SOCKET] Disconnected ${userId}`);
+    const result = getRoomByUserId(userId);
+    if (!result) return;
 
-        const result = getRoomByUserId(userId);
+    const { roomId, room } = result;
+    room.members.delete(userId);
 
-        if(!result) return;
-
-        const {roomId,room} = result;
-
-        room.members.delete(userId);
-
-        if(room.members.size===0){
-
-            rooms.delete(roomId);
-
-        }else{
-
-            broadcastRoomState(roomId);
-
-        }
-
-    });
-
+    if (room.members.size === 0) {
+        rooms.delete(roomId);
+    } else {
+        transferHostIfNeeded(roomId, room);
+        broadcastRoomState(roomId);
+    }
 });
 
 // ============================================
